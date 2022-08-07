@@ -18,7 +18,7 @@ async fn main() {
 
 	crawling_engine.add_destination("https://sixey.es/").await;
 
-	crawling_engine.start_engine(5000).await;
+	crawling_engine.start_engine(10000).await;
 
 	println!("Ended")
 }

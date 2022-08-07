@@ -8,7 +8,7 @@ use tokio::time::{sleep, Duration, Instant};
 
 use scraper::{Html, Selector};
 
-#[derive(Debug)]
+
 pub struct CrawlingEngine {
 	client: reqwest::Client,
 	pages_input: Sender<String>,
@@ -19,7 +19,6 @@ pub struct CrawlingEngine {
 
 impl CrawlingEngine {
 
-	#[tracing::instrument]
 	pub async fn get_visited_count(&self) -> usize{
 		self.visited.lock().await.len()
 	}
@@ -47,7 +46,7 @@ impl CrawlingEngine {
 	async fn report_statistics(&self){
 		let start = Instant::now();
 		loop{
-			sleep(Duration::from_secs(3)).await;
+			sleep(Duration::from_millis(200)).await;
 			let vis_count = self.get_visited_count().await;
 			let time_spent = (Instant::now() - start).as_secs_f64();
 			let speed = vis_count as f64/ time_spent;
@@ -55,7 +54,6 @@ impl CrawlingEngine {
 		}
 	}
 
-	#[tracing::instrument]
 	pub async fn start_engine(&self, workers: i32) {
 		let mut jobs = Vec::new();
 
@@ -67,7 +65,6 @@ impl CrawlingEngine {
 		tokio::join!(self.report_statistics(), future::join_all(jobs));
 	}
 
-	#[tracing::instrument]
 	pub async fn add_destination(&self, destination: &str) {
 		self.pages_input.send_async(destination.to_string()).await.unwrap();
 	}
@@ -81,7 +78,6 @@ impl CrawlingEngine {
 		}
 	}
 
-	#[tracing::instrument]
 	async fn process_queue(&self) -> reqwest::Result<()> {
 		loop {
 			if let Ok(url) = self.pages_output.recv_async().await{
