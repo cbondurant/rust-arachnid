@@ -2,6 +2,7 @@ use futures::future;
 use std::collections::HashSet;
 use std::iter::Iterator;
 use tokio::sync::Mutex;
+use flume::{Sender, Receiver};
 
 use tokio::time::{sleep, Duration, Instant};
 
@@ -10,7 +11,8 @@ use scraper::{Html, Selector};
 #[derive(Debug)]
 pub struct CrawlingEngine {
 	client: reqwest::Client,
-	queue: Mutex<Vec<String>>,
+	pages_input: Sender<String>,
+	pages_output: Receiver<String>,
 	visited: Mutex<HashSet<String>>,
 	blocklist: Vec<String>,
 }
@@ -32,9 +34,11 @@ impl CrawlingEngine {
 	}
 
 	pub fn new() -> Self {
+		let (rx, tx) = flume::unbounded();
 		CrawlingEngine {
 			client: reqwest::Client::new(),
-			queue: Mutex::new(Vec::new()),
+			pages_input: rx,
+			pages_output: tx,
 			visited: Mutex::new(HashSet::new()),
 			blocklist: Vec::new(),
 		}
@@ -65,28 +69,22 @@ impl CrawlingEngine {
 
 	#[tracing::instrument]
 	pub async fn add_destination(&self, destination: &str) {
-		let mut queue = self.queue.lock().await;
-		queue.push(destination.to_string());
-		drop(queue);
+		self.pages_input.send_async(destination.to_string()).await.unwrap();
 	}
 
 	pub async fn add_destinations<'a, I>(&self, destinations: I)
 	where
 		I: Iterator<Item = &'a str>,
 	{
-		let mut queue = self.queue.lock().await;
 		for dest in destinations {
-			queue.push(dest.to_string());
+			self.pages_input.send_async(dest.to_string()).await.unwrap();
 		}
-		drop(queue);
 	}
 
 	#[tracing::instrument]
 	async fn process_queue(&self) -> reqwest::Result<()> {
 		loop {
-			let mut queue_guard = self.queue.lock().await;
-			if let Some(url) = queue_guard.pop() {
-				drop(queue_guard);
+			if let Ok(url) = self.pages_output.recv_async().await{
 
 				if self.url_is_blocked(url.as_str()) {
 					continue;
@@ -104,7 +102,7 @@ impl CrawlingEngine {
 				let resp = match self.client.get(&url).send().await {
 					Ok(resp) => resp,
 					Err(e) => {
-						tracing::warn!("{}", e);
+						//tracing::warn!("{}", e);
 						continue;
 					}
 				};
