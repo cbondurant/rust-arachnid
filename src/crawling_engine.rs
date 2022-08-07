@@ -1,13 +1,12 @@
+use flume::{Receiver, Sender};
 use futures::future;
 use std::collections::HashSet;
 use std::iter::Iterator;
 use tokio::sync::Mutex;
-use flume::{Sender, Receiver};
 
 use tokio::time::{sleep, Duration, Instant};
 
 use scraper::{Html, Selector};
-
 
 pub struct CrawlingEngine {
 	client: reqwest::Client,
@@ -18,8 +17,7 @@ pub struct CrawlingEngine {
 }
 
 impl CrawlingEngine {
-
-	pub async fn get_visited_count(&self) -> usize{
+	pub async fn get_visited_count(&self) -> usize {
 		self.visited.lock().await.len()
 	}
 
@@ -43,14 +41,19 @@ impl CrawlingEngine {
 		}
 	}
 
-	async fn report_statistics(&self){
+	async fn report_statistics(&self) {
 		let start = Instant::now();
-		loop{
+		loop {
 			sleep(Duration::from_millis(200)).await;
 			let vis_count = self.get_visited_count().await;
 			let time_spent = (Instant::now() - start).as_secs_f64();
-			let speed = vis_count as f64/ time_spent;
-			tracing::info!("{}, {}, {}", vis_count, (Instant::now() - start).as_secs_f64(),speed);
+			let speed = vis_count as f64 / time_spent;
+			tracing::info!(
+				"{}, {}, {}",
+				vis_count,
+				(Instant::now() - start).as_secs_f64(),
+				speed
+			);
 		}
 	}
 
@@ -61,12 +64,14 @@ impl CrawlingEngine {
 			jobs.push(self.process_queue());
 		}
 
-
 		tokio::join!(self.report_statistics(), future::join_all(jobs));
 	}
 
 	pub async fn add_destination(&self, destination: &str) {
-		self.pages_input.send_async(destination.to_string()).await.unwrap();
+		self.pages_input
+			.send_async(destination.to_string())
+			.await
+			.unwrap();
 	}
 
 	pub async fn add_destinations<'a, I>(&self, destinations: I)
@@ -80,8 +85,7 @@ impl CrawlingEngine {
 
 	async fn process_queue(&self) -> reqwest::Result<()> {
 		loop {
-			if let Ok(url) = self.pages_output.recv_async().await{
-
+			if let Ok(url) = self.pages_output.recv_async().await {
 				if self.url_is_blocked(url.as_str()) {
 					continue;
 				}
