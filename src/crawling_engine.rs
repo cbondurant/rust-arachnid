@@ -21,6 +21,8 @@ impl CrawlingEngine {
 		self.visited.lock().await.len()
 	}
 
+	// Is the listed URL blocked by one of our rules?
+	// TODO: Improve url parsing and block rules.
 	fn url_is_blocked(&self, url: &str) -> bool {
 		for page in self.blocklist.iter() {
 			if url.contains(page.as_str()) {
@@ -41,6 +43,8 @@ impl CrawlingEngine {
 		}
 	}
 
+	// Loops infinitely with a sleep.
+	// Used to report the amount of pages visited and the current page view speed.
 	async fn report_statistics(&self) {
 		let start = Instant::now();
 		loop {
@@ -57,6 +61,7 @@ impl CrawlingEngine {
 		}
 	}
 
+	// Begins the async crawling engine, instancing the provided number of workers to process pages.
 	pub async fn start_engine(&self, workers: i32) {
 		let mut jobs = Vec::new();
 
@@ -67,6 +72,7 @@ impl CrawlingEngine {
 		tokio::join!(self.report_statistics(), future::join_all(jobs));
 	}
 
+	// Add a single destination to the queue of destinations to crawl.
 	pub async fn add_destination(&self, destination: &str) {
 		self.pages_input
 			.send_async(destination.to_string())
@@ -74,6 +80,7 @@ impl CrawlingEngine {
 			.unwrap();
 	}
 
+	// Adds every destination inthe provided iterator to the queue of destinations to crawl
 	pub async fn add_destinations<'a, I>(&self, destinations: I)
 	where
 		I: Iterator<Item = &'a str>,
@@ -83,6 +90,7 @@ impl CrawlingEngine {
 		}
 	}
 
+	// Worker thread, intended to be instance in paralell, reads from the queue endlessly.
 	async fn process_queue(&self) -> reqwest::Result<()> {
 		loop {
 			if let Ok(url) = self.pages_output.recv_async().await {
