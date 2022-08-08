@@ -7,3 +7,4 @@ Todo:
 Start storing pages and metadata regarding pages.
 Runtime configuration.
 Crawl resumption.
+Improving the blocklisting system for domains and pages I dont want to crawl.

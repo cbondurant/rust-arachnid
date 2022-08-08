@@ -23,6 +23,7 @@ impl CrawlingEngine {
 
 	// Is the listed URL blocked by one of our rules?
 	// TODO: Improve url parsing and block rules.
+	// Reqwest has a url parser, utilize that.
 	fn url_is_blocked(&self, url: &str) -> bool {
 		for page in self.blocklist.iter() {
 			if url.contains(page.as_str()) {
@@ -110,7 +111,7 @@ impl CrawlingEngine {
 				let resp = match self.client.get(&url).send().await {
 					Ok(resp) => resp,
 					Err(e) => {
-						//tracing::warn!("{}", e);
+						tracing::info!("{}", e);
 						continue;
 					}
 				};
