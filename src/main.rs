@@ -18,10 +18,15 @@ async fn main() {
 
 	tracing::info!("Starting");
 
-	let crawling_engine = CrawlingEngine::new();
+	let mut crawling_engine = CrawlingEngine::new();
 
 	// A site on the corner of the internet, a good starting point.
-	crawling_engine.add_destination("https://sixey.es/").await;
+	// unwrapping because I know its a real addres.
+	crawling_engine.add_destination(reqwest::Url::parse("https://sixey.es/").unwrap()).await;
+
+	crawling_engine.register_callback(|url,html| {
+		// Add info here
+	});
 
 	// TODO: find a better way to optimize for the number of workers
 	crawling_engine.start_engine(10000).await;

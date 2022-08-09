@@ -4,21 +4,27 @@ use std::collections::HashSet;
 use std::iter::Iterator;
 use tokio::sync::Mutex;
 
+use reqwest::Url;
+
 use tokio::time::{sleep, Duration, Instant};
 
 use scraper::{Html, Selector};
 
+type Callback = fn(url: &Url, dom: &Html) -> ();
+
 pub struct CrawlingEngine {
 	client: reqwest::Client,
-	pages_input: Sender<String>,
-	pages_output: Receiver<String>,
-	visited: Mutex<HashSet<String>>,
+	pages_input: Sender<Url>,
+	pages_output: Receiver<Url>,
+	visited: Mutex<HashSet<Url>>,
 	blocklist: Vec<String>,
+	callbacks: Vec<Callback>,
+	responded: Mutex<i32>
 }
 
 impl CrawlingEngine {
-	pub async fn get_visited_count(&self) -> usize {
-		self.visited.lock().await.len()
+	pub async fn get_visited_count(&self) -> i32 {
+		*self.responded.lock().await
 	}
 
 	// Is the listed URL blocked by one of our rules?
@@ -41,7 +47,13 @@ impl CrawlingEngine {
 			pages_output: tx,
 			visited: Mutex::new(HashSet::new()),
 			blocklist: Vec::new(),
+			callbacks: Vec::new(),
+			responded: Mutex::new(0),
 		}
+	}
+
+	pub fn register_callback(&mut self, cb: Callback) {
+		self.callbacks.push(cb);
 	}
 
 	// Loops infinitely with a sleep.
@@ -74,20 +86,17 @@ impl CrawlingEngine {
 	}
 
 	// Add a single destination to the queue of destinations to crawl.
-	pub async fn add_destination(&self, destination: &str) {
-		self.pages_input
-			.send_async(destination.to_string())
-			.await
-			.unwrap();
+	pub async fn add_destination(&self, destination: Url) {
+		self.pages_input.send_async(destination).await.unwrap();
 	}
 
 	// Adds every destination inthe provided iterator to the queue of destinations to crawl
 	pub async fn add_destinations<'a, I>(&self, destinations: I)
 	where
-		I: Iterator<Item = &'a str>,
+		I: Iterator<Item = Url>,
 	{
 		for dest in destinations {
-			self.pages_input.send_async(dest.to_string()).await.unwrap();
+			self.pages_input.send_async(dest).await.unwrap();
 		}
 	}
 
@@ -108,10 +117,10 @@ impl CrawlingEngine {
 
 				//tracing::info!("Begin Request: {}", url);
 
-				let resp = match self.client.get(&url).send().await {
+				let resp = match self.client.get(url.clone()).send().await {
 					Ok(resp) => resp,
-					Err(e) => {
-						tracing::info!("{}", e);
+					Err(_e) => {
+						//tracing::info!("{}", e);
 						continue;
 					}
 				};
@@ -126,6 +135,9 @@ impl CrawlingEngine {
 
 				let dom = Html::parse_document(&text);
 
+				for cb in &self.callbacks {
+					cb(&url, &dom);
+				}
 				// Unwrap safe because static selector is always valid
 				let sel = Selector::parse("a").unwrap();
 
@@ -133,12 +145,16 @@ impl CrawlingEngine {
 				self.add_destinations(
 					dom.select(&sel)
 						.filter_map(|e| e.value().attr("href"))
+						.filter_map(|s| Url::parse(s).map_or(None, |x| Some(x)))
 						.filter(|link| {
-							!visited.contains(&link.to_string()) && link.starts_with("http")
+							!visited.contains(link)
+								&& (link.scheme() == "http" || link.scheme() == "https")
 						}),
 				)
 				.await;
-
+				let mut resp = self.responded.lock().await;
+				*resp += 1;
+				drop(resp);
 				drop(visited);
 			} else {
 				// No work to be done, cede execution
