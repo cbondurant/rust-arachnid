@@ -145,7 +145,7 @@ impl CrawlingEngine {
 				self.add_destinations(
 					dom.select(&sel)
 						.filter_map(|e| e.value().attr("href"))
-						.filter_map(|s| Url::parse(s).map_or(None, |x| Some(x)))
+						.filter_map(|s| Url::parse(s).map_or(None, Some))
 						.filter(|link| {
 							!visited.contains(link)
 								&& (link.scheme() == "http" || link.scheme() == "https")
