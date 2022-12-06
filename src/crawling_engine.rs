@@ -1,5 +1,5 @@
 use flume::{Receiver, Sender};
-use futures::future;
+use futures::future::{self, BoxFuture};
 use std::collections::HashSet;
 use std::iter::Iterator;
 use tokio::sync::Mutex;
@@ -10,7 +10,7 @@ use tokio::time::{sleep, Duration, Instant};
 
 use scraper::{Html, Selector};
 
-type Callback = fn(url: &Url, dom: &Html) -> ();
+type Callback = Box<dyn for<'a> Fn(&'a Url, &'a str) -> BoxFuture<'a, ()>>;
 
 pub struct CrawlingEngine {
 	client: reqwest::Client,
@@ -19,7 +19,7 @@ pub struct CrawlingEngine {
 	visited: Mutex<HashSet<Url>>,
 	blocklist: Vec<String>,
 	callbacks: Vec<Callback>,
-	responded: Mutex<i32>
+	responded: Mutex<i32>,
 }
 
 impl CrawlingEngine {
@@ -136,7 +136,7 @@ impl CrawlingEngine {
 				let dom = Html::parse_document(&text);
 
 				for cb in &self.callbacks {
-					cb(&url, &dom);
+					cb(&url, &dom.root_element().html()).await;
 				}
 				// Unwrap safe because static selector is always valid
 				let sel = Selector::parse("a").unwrap();
@@ -145,7 +145,7 @@ impl CrawlingEngine {
 				self.add_destinations(
 					dom.select(&sel)
 						.filter_map(|e| e.value().attr("href"))
-						.filter_map(|s| Url::parse(s).map_or(None, Some))
+						.filter_map(|s| Url::parse(s).ok())
 						.filter(|link| {
 							!visited.contains(link)
 								&& (link.scheme() == "http" || link.scheme() == "https")
