@@ -1,6 +1,6 @@
 mod crawling_engine;
 
-use std::{str::FromStr, time::Duration};
+use std::str::FromStr;
 
 use crawling_engine::CrawlingEngine;
 use sqlx::sqlite::{
@@ -14,7 +14,10 @@ async fn main() {
 	let subscriber = tracing_subscriber::fmt()
 		.compact()
 		.without_time()
+		.with_file(true)
+		.with_line_number(true)
 		.with_thread_ids(false)
+		.with_target(false)
 		.finish();
 
 	if let Err(e) = tracing::subscriber::set_global_default(subscriber) {
@@ -34,8 +37,6 @@ async fn main() {
 	let pool = SqlitePoolOptions::new()
 		//.max_connections(10000)
 		.max_connections(1)
-		.test_before_acquire(false)
-		.acquire_timeout(Duration::new(60, 0))
 		.test_before_acquire(false)
 		.connect_with(sqlite_options)
 		.await
@@ -63,12 +64,10 @@ async fn main() {
 		.add_destination(reqwest::Url::parse("http://sixey.es/").unwrap())
 		.await;
 
-	// crawling_engine
-	// 	.add_destination(reqwest::Url::parse("https://distrowatch.com/").unwrap())
-	// 	.await;
-
 	// TODO: find a better way to optimize for the number of workers
-	crawling_engine.start_engine(1000).await;
+	let crawling_engine = crawling_engine.start_engine(1000).await;
+
+	println!("{}", crawling_engine.get_visited_count().await);
 
 	println!("Ended")
 }

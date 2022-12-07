@@ -1,9 +1,9 @@
 use flume::{Receiver, Sender};
-use futures::future::{self};
 use sqlx::{Pool, Sqlite};
 use std::iter::Iterator;
 use std::{collections::HashSet, sync::Arc};
-use tokio::sync::Mutex;
+use tokio::signal;
+use tokio::sync::{watch, Mutex};
 
 use reqwest::Url;
 
@@ -11,6 +11,7 @@ use tokio::time::{sleep, Duration, Instant};
 
 use scraper::{Html, Selector};
 
+#[derive(Debug)]
 pub struct CrawlingEngine {
 	client: reqwest::Client,
 	pages_input: Sender<Url>,
@@ -41,7 +42,10 @@ impl CrawlingEngine {
 	pub fn new(pool: Pool<Sqlite>) -> Self {
 		let (rx, tx) = flume::unbounded();
 		CrawlingEngine {
-			client: reqwest::Client::new(),
+			client: reqwest::Client::builder()
+				.timeout(Duration::from_secs(15))
+				.build()
+				.unwrap(),
 			pages_input: rx,
 			pages_output: tx,
 			visited: Mutex::new(HashSet::new()),
@@ -53,15 +57,18 @@ impl CrawlingEngine {
 
 	// Loops infinitely with a sleep.
 	// Used to report the amount of pages visited and the current page view speed.
-	async fn report_statistics(data: Arc<Self>) {
+	async fn report_statistics(data: Arc<Self>, commands: watch::Receiver<bool>) {
 		let start = Instant::now();
 		loop {
+			if *commands.borrow() {
+				break;
+			}
 			sleep(Duration::from_millis(200)).await;
 			let vis_count = data.get_visited_count().await;
 			let time_spent = (Instant::now() - start).as_secs_f64();
 			let speed = vis_count as f64 / time_spent;
 			tracing::info!(
-				"{}, {}, {}",
+				"{}, {:.1}, {:.1}",
 				vis_count,
 				(Instant::now() - start).as_secs_f64(),
 				speed
@@ -70,19 +77,33 @@ impl CrawlingEngine {
 	}
 
 	// Begins the async crawling engine, instancing the provided number of workers to process pages.
-	pub async fn start_engine(self, workers: i32) {
-		let mut jobs = Vec::new();
-
+	pub async fn start_engine(self, workers: i32) -> Self {
 		let data = Arc::new(self);
 
+		let (kill_send, kill_recv) = watch::channel(false);
+
 		for _ in 0..workers {
-			jobs.push(tokio::spawn(Self::process_queue(Arc::clone(&data))));
+			tokio::spawn(Self::process_queue(Arc::clone(&data), kill_recv.clone()));
 		}
 
-		tokio::join!(
-			Self::report_statistics(Arc::clone(&data)),
-			future::join_all(jobs)
-		);
+		tokio::spawn(Self::report_statistics(
+			Arc::clone(&data),
+			kill_recv.clone(),
+		));
+		match signal::ctrl_c().await {
+			Ok(()) => {
+				kill_send.send(true).unwrap();
+			}
+			Err(err) => {
+				eprintln!("Unable to listen for shutdown signal: {}", err);
+				// we also shut down in case of error
+			}
+		}
+		drop(kill_recv);
+		while !kill_send.is_closed() {
+			sleep(Duration::from_secs(1)).await;
+		}
+		Arc::try_unwrap(data).unwrap()
 	}
 
 	// Add a single destination to the queue of destinations to crawl.
@@ -101,8 +122,13 @@ impl CrawlingEngine {
 	}
 
 	// Worker thread, intended to be instance in paralell, reads from the queue endlessly.
-	async fn process_queue(data: Arc<Self>) {
+	#[tracing::instrument(name = "process_queue", skip(data, commands))]
+	async fn process_queue(data: Arc<Self>, commands: watch::Receiver<bool>) {
 		loop {
+			if *commands.borrow() {
+				break;
+			}
+
 			if let Ok(url) = data.pages_output.recv_async().await {
 				if data.url_is_blocked(url.as_str()) {
 					continue;
@@ -125,6 +151,19 @@ impl CrawlingEngine {
 						continue;
 					}
 				};
+
+				if let Some(hval) = resp
+					.headers()
+					.get("Content-Type")
+					.and_then(|val| val.to_str().ok())
+				{
+					if !hval.starts_with("text/plain") && !hval.starts_with("text/html") {
+						//tracing::info!("Invalid Mimetype {:?}, discarding.", hval);
+						continue;
+					}
+				} else {
+					continue;
+				}
 
 				let text = match resp.text().await {
 					Ok(resp) => resp,
@@ -149,6 +188,11 @@ impl CrawlingEngine {
 				let sel = Selector::parse("a").unwrap();
 
 				let visited = data.visited.lock().await;
+
+				// Must collect all at once as Html is not Send.
+				// As a result we cant still have a reference to HTML
+				// In any capacity when we next call an .await
+				#[allow(clippy::needless_collect)]
 				let destinations: Vec<Url> = Html::parse_document(&text)
 					.select(&sel)
 					.filter_map(|e| e.value().attr("href"))
