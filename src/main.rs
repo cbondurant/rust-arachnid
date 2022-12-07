@@ -3,31 +3,10 @@ mod crawling_engine;
 use std::{str::FromStr, time::Duration};
 
 use crawling_engine::CrawlingEngine;
-use futures::{future::BoxFuture, FutureExt};
-use reqwest::Url;
-use sqlx::{
-	sqlite::{
-		SqliteConnectOptions, SqliteJournalMode, SqliteLockingMode, SqlitePoolOptions,
-		SqliteSynchronous,
-	},
-	SqlitePool,
+use sqlx::sqlite::{
+	SqliteConnectOptions, SqliteJournalMode, SqliteLockingMode, SqlitePoolOptions,
+	SqliteSynchronous,
 };
-
-fn store_location<'a>(pool: SqlitePool, url: &'a Url, html: &'a str) -> BoxFuture<'a, ()> {
-	async move {
-		match sqlx::query("INSERT INTO pages (domain, path, html) VALUES (?, ?, ?)")
-			.bind(url.domain())
-			.bind(url.path())
-			.bind(html)
-			.execute(&pool)
-			.await
-		{
-			Ok(_) => (),
-			Err(e) => tracing::warn!("{}", e),
-		};
-	}
-	.boxed()
-}
 
 #[tokio::main]
 async fn main() {
@@ -44,14 +23,6 @@ async fn main() {
 	// Logging started
 
 	tracing::info!("Starting");
-
-	let mut crawling_engine = CrawlingEngine::new();
-
-	// A site on the corner of the internet, a good starting point.
-	// unwrapping because I know its a real addres.
-	crawling_engine
-		.add_destination(reqwest::Url::parse("http://sixey.es/").unwrap())
-		.await;
 
 	let sqlite_options = SqliteConnectOptions::from_str("sqlite://./db.sqlite")
 		.unwrap()
@@ -72,10 +43,10 @@ async fn main() {
 
 	match sqlx::query(
 		"CREATE TABLE pages(
-		domain TEXT NOT NULL,
-		path TEXT NOT NULL,
-		html TEXT NOT NULL,
-		PRIMARY KEY(domain, path))",
+	domain TEXT NOT NULL,
+	path TEXT NOT NULL,
+	html TEXT NOT NULL,
+	PRIMARY KEY(domain, path))",
 	)
 	.execute(&pool)
 	.await
@@ -84,12 +55,20 @@ async fn main() {
 		Err(e) => tracing::warn!("{}", e),
 	}
 
-	crawling_engine.register_callback(Box::new(move |url, html| {
-		store_location(pool.clone(), url, html)
-	}));
+	let crawling_engine = CrawlingEngine::new(pool);
+
+	// A site on the corner of the internet, a good starting point.
+	// unwrapping because I know its a real addres.
+	crawling_engine
+		.add_destination(reqwest::Url::parse("http://sixey.es/").unwrap())
+		.await;
+
+	// crawling_engine
+	// 	.add_destination(reqwest::Url::parse("https://distrowatch.com/").unwrap())
+	// 	.await;
 
 	// TODO: find a better way to optimize for the number of workers
-	crawling_engine.start_engine(10000).await;
+	crawling_engine.start_engine(1000).await;
 
 	println!("Ended")
 }
