@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use html5ever::tendril::{Tendril, TendrilSink};
-use kuchiki::{parse_html, NodeRef};
+use kuchiki::{parse_html, NodeData, NodeRef};
 
 fn remove_unwanted_tags(node: &NodeRef) {
 	let mut disallowed_tags = HashSet::new();
@@ -9,15 +9,12 @@ fn remove_unwanted_tags(node: &NodeRef) {
 	disallowed_tags.insert("script");
 	disallowed_tags.insert("head");
 	for child in node.children() {
-		match child.0.data() {
-			kuchiki::NodeData::Element(e) => {
-				if disallowed_tags.contains(e.name.local.to_string().as_str()) {
-					child.detach()
-				} else {
-					remove_unwanted_tags(&child);
-				}
+		if let NodeData::Element(e) = child.0.data() {
+			if disallowed_tags.contains(e.name.local.to_string().as_str()) {
+				child.detach()
+			} else {
+				remove_unwanted_tags(&child);
 			}
-			_ => (),
 		}
 	}
 	println!("Walking out!");

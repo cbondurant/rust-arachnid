@@ -3,6 +3,7 @@ mod crawling_engine;
 mod scraping;
 
 use scraping::get_words;
+use sqlx::SqlitePool;
 
 use std::io::Write;
 use std::path::Path;
@@ -20,75 +21,8 @@ use sqlx::{
 
 use tokio_stream::StreamExt;
 
-async fn construct_idf() {
-	let sqlite_options = SqliteConnectOptions::from_str("sqlite://./db.sqlite")
-		.unwrap()
-		.create_if_missing(true)
-		.synchronous(SqliteSynchronous::Off)
-		.locking_mode(SqliteLockingMode::Exclusive)
-		.journal_mode(SqliteJournalMode::Wal);
-
-	let pool = SqlitePoolOptions::new()
-		//.max_connections(10000)
-		.max_connections(1)
-		.test_before_acquire(false)
-		.connect_with(sqlite_options)
-		.await
-		.unwrap();
-
-	let query = sqlx::query("SELECT html FROM pages");
-
-	let mut fetch = pool.fetch(query);
-
-	let mut freq_count: HashMap<String, i32> = HashMap::new();
-
-	let mut i: u64 = 0;
-
-	while let Some(row) = fetch.next().await {
-		match row {
-			Ok(row) => {
-				let text: String = row.try_get(0).unwrap();
-				let words = get_words(&text);
-
-				for word in words.split(char::is_whitespace).filter(|s| !s.is_empty()) {
-					*freq_count.entry(word.to_owned()).or_default() += 1;
-					i += 1;
-				}
-
-				println!("{}", i);
-			}
-			Err(_) => (),
-		}
-	}
-
-	let mut word_pairs: Vec<(&String, &i32)> = freq_count.iter().collect();
-
-	word_pairs.sort_by(|(_, v1), (_, v2)| v1.cmp(v2));
-
-	println!("Unique: {}, Total:{}", word_pairs.len(), i);
-
-	for word in word_pairs.iter().rev().take(10) {
-		println!("{:?}", word);
-	}
-
-	// Convert frequencies into IDF
-	let mut inverse_doc_freq = HashMap::new();
-
-	for (word, freq) in word_pairs {
-		inverse_doc_freq
-			.entry(word)
-			.or_insert((i as f64 / *freq as f64).log2());
-	}
-
-	let serialize = serde_json::to_string(&inverse_doc_freq).unwrap();
-
-	let mut file = File::create(Path::new("./inverse_doc_freq")).unwrap();
-
-	file.write_all(serialize.as_bytes()).unwrap();
-}
-
-async fn crawl_pages() {
-	let sqlite_options = SqliteConnectOptions::from_str("sqlite://./db.sqlite")
+async fn ensure_database(path: &str) -> SqlitePool {
+	let sqlite_options = SqliteConnectOptions::from_str(path)
 		.unwrap()
 		.create_if_missing(true)
 		.synchronous(SqliteSynchronous::Off)
@@ -130,6 +64,59 @@ async fn crawl_pages() {
 		Err(e) => tracing::warn!("{}", e),
 	}
 
+	pool
+}
+
+async fn construct_idf(pool: &SqlitePool) {
+	let query = sqlx::query("SELECT html FROM pages");
+
+	let mut fetch = pool.fetch(query);
+
+	let mut freq_count: HashMap<String, i32> = HashMap::new();
+
+	let mut i: u64 = 0;
+
+	while let Some(row) = fetch.next().await {
+		if let Ok(row) = row {
+			let text: String = row.try_get(0).unwrap();
+			let words = get_words(&text);
+
+			for word in words.split(char::is_whitespace).filter(|s| !s.is_empty()) {
+				*freq_count.entry(word.to_owned()).or_default() += 1;
+				i += 1;
+			}
+
+			println!("{}", i);
+		}
+	}
+
+	let mut word_pairs: Vec<(&String, &i32)> = freq_count.iter().collect();
+
+	word_pairs.sort_by(|(_, v1), (_, v2)| v1.cmp(v2));
+
+	println!("Unique: {}, Total:{}", word_pairs.len(), i);
+
+	for word in word_pairs.iter().rev().take(10) {
+		println!("{:?}", word);
+	}
+
+	// Convert frequencies into IDF
+	let mut inverse_doc_freq = HashMap::new();
+
+	for (word, freq) in word_pairs {
+		inverse_doc_freq
+			.entry(word)
+			.or_insert_with(|| (i as f64 / *freq as f64).log2());
+	}
+
+	let serialize = serde_json::to_string(&inverse_doc_freq).unwrap();
+
+	let mut file = File::create(Path::new("./inverse_doc_freq")).unwrap();
+
+	file.write_all(serialize.as_bytes()).unwrap();
+}
+
+async fn crawl_pages(pool: SqlitePool) {
 	let crawling_engine = CrawlingEngine::new(pool);
 
 	// A site on the corner of the internet, a good starting point.
@@ -163,7 +150,9 @@ async fn main() {
 
 	tracing::info!("Starting");
 
-	crawl_pages().await;
+	let pool = ensure_database("sqlite://./db.sqlite").await;
 
-	construct_idf().await;
+	crawl_pages(pool.clone()).await;
+
+	construct_idf(&pool).await;
 }
