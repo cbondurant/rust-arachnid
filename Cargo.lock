@@ -503,13 +503,27 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "html5ever"
+version = "0.25.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5c13fb08e5d4dfc151ee5e88bae63f7773d61852f3bdc73c9f4b9e1bde03148"
+dependencies = [
+ "log",
+ "mac",
+ "markup5ever 0.10.1",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "html5ever"
 version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bea68cab48b8459f17cf1c944c67ddc572d272d9f2b274140f223ecb1da4a3b7"
 dependencies = [
  "log",
  "mac",
- "markup5ever",
+ "markup5ever 0.11.0",
  "proc-macro2",
  "quote",
  "syn",
@@ -653,6 +667,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "kuchiki"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1ea8e9c6e031377cff82ee3001dc8026cdf431ed4e2e6b51f98ab8c73484a358"
+dependencies = [
+ "cssparser",
+ "html5ever 0.25.2",
+ "matches",
+ "selectors",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -699,6 +725,20 @@ name = "mac"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c41e0c4fef86961ac6d6f8a82609f55f31b05e4fce149ac5710e439df7619ba4"
+
+[[package]]
+name = "markup5ever"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a24f40fb03852d1cdd84330cddcaf98e9ec08a7b7768e952fad3b4cf048ec8fd"
+dependencies = [
+ "log",
+ "phf 0.8.0",
+ "phf_codegen 0.8.0",
+ "string_cache",
+ "string_cache_codegen",
+ "tendril",
+]
 
 [[package]]
 name = "markup5ever"
@@ -1236,10 +1276,14 @@ name = "rust-arachnid"
 version = "0.1.0"
 dependencies = [
  "flume",
+ "html5ever 0.26.0",
+ "kuchiki",
  "reqwest",
  "scraper",
+ "serde_json",
  "sqlx",
  "tokio",
+ "tokio-stream",
  "tracing",
  "tracing-subscriber",
 ]
@@ -1284,7 +1328,7 @@ dependencies = [
  "cssparser",
  "ego-tree",
  "getopts",
- "html5ever",
+ "html5ever 0.26.0",
  "matches",
  "selectors",
  "smallvec",
