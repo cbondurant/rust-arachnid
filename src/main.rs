@@ -3,12 +3,10 @@ mod crawling_engine;
 mod scraping;
 
 use scraping::get_words;
-use sqlx::SqlitePool;
+use tokio::time::sleep;
 
-use std::io::Write;
-use std::path::Path;
 use std::str::FromStr;
-use std::{collections::HashMap, fs::File};
+use std::{collections::HashMap, time::Duration};
 
 use crawling_engine::CrawlingEngine;
 use sqlx::{
@@ -16,12 +14,14 @@ use sqlx::{
 		SqliteConnectOptions, SqliteJournalMode, SqliteLockingMode, SqlitePoolOptions,
 		SqliteSynchronous,
 	},
-	Executor, Row,
+	Executor, Row, SqlitePool,
 };
 
 use tokio_stream::StreamExt;
 
 async fn ensure_database(path: &str) -> SqlitePool {
+	tracing::info!("Opening Database");
+
 	let sqlite_options = SqliteConnectOptions::from_str(path)
 		.unwrap()
 		.create_if_missing(true)
@@ -37,6 +37,10 @@ async fn ensure_database(path: &str) -> SqlitePool {
 		.await
 		.unwrap();
 
+	if let Err(e) = sqlx::query("PRAGMA foreign_keys = ON").execute(&pool).await {
+		tracing::warn!("{:?}", e);
+	}
+
 	match sqlx::query(
 		"CREATE TABLE pages(
 	domain TEXT NOT NULL,
@@ -48,19 +52,61 @@ async fn ensure_database(path: &str) -> SqlitePool {
 	.await
 	{
 		Ok(_) => (),
-		Err(e) => tracing::warn!("{}", e),
+		Err(sqlx::Error::Database(e)) => match e.code() {
+			Some(c) => {
+				if c != "1" {
+					tracing::warn!("{}", e);
+				}
+			}
+			None => tracing::warn!("{}", e),
+		},
+		Err(e) => tracing::warn!("{:?}", e),
 	}
 
 	match sqlx::query(
 		"CREATE TABLE keywords(
 	word TEXT NOT NULL,
-	IDF REAL NOT NULL,
+	idf REAL NOT NULL,
 	PRIMARY KEY(word))",
 	)
 	.execute(&pool)
 	.await
 	{
 		Ok(_) => (),
+		Err(sqlx::Error::Database(e)) => match e.code() {
+			Some(c) => {
+				if c != "1" {
+					tracing::warn!("{}", e);
+				}
+			}
+			None => tracing::warn!("{}", e),
+		},
+		Err(e) => tracing::warn!("{}", e),
+	}
+
+	match sqlx::query(
+		"CREATE TABLE importance (
+			domain	TEXT NOT NULL,
+			path	TEXT NOT NULL,
+			word	TEXT NOT NULL,
+			weight	REAL NOT NULL,
+			FOREIGN KEY(domain, path) REFERENCES pages(domain, path) ON DELETE CASCADE,
+			PRIMARY KEY(path, domain, word),
+			FOREIGN KEY(word) REFERENCES keywords(word) ON DELETE CASCADE
+		);",
+	)
+	.execute(&pool)
+	.await
+	{
+		Ok(_) => (),
+		Err(sqlx::Error::Database(e)) => match e.code() {
+			Some(c) => {
+				if c != "1" {
+					tracing::warn!("{}", e);
+				}
+			}
+			None => tracing::warn!("{}", e),
+		},
 		Err(e) => tracing::warn!("{}", e),
 	}
 
@@ -86,7 +132,7 @@ async fn construct_idf(pool: &SqlitePool) {
 				i += 1;
 			}
 
-			println!("{}", i);
+			tracing::info!("Words processed: {}", i);
 		}
 	}
 
@@ -94,11 +140,7 @@ async fn construct_idf(pool: &SqlitePool) {
 
 	word_pairs.sort_by(|(_, v1), (_, v2)| v1.cmp(v2));
 
-	println!("Unique: {}, Total:{}", word_pairs.len(), i);
-
-	for word in word_pairs.iter().rev().take(10) {
-		println!("{:?}", word);
-	}
+	tracing::info!("Unique: {}, Total:{}", word_pairs.len(), i);
 
 	// Convert frequencies into IDF
 	let mut inverse_doc_freq = HashMap::new();
@@ -109,11 +151,86 @@ async fn construct_idf(pool: &SqlitePool) {
 			.or_insert_with(|| (i as f64 / *freq as f64).log2());
 	}
 
-	let serialize = serde_json::to_string(&inverse_doc_freq).unwrap();
+	tracing::info!("Rewriting keywords table...");
+	sqlx::query("DELETE FROM keywords")
+		.execute(pool)
+		.await
+		.unwrap();
+	sqlx::query("VACUUM").execute(pool).await.unwrap();
 
-	let mut file = File::create(Path::new("./inverse_doc_freq")).unwrap();
+	for (word, frequency) in inverse_doc_freq {
+		sqlx::query("INSERT INTO keywords (word, idf) VALUES (?, ?)")
+			.bind(word)
+			.bind(frequency)
+			.execute(pool)
+			.await
+			.unwrap();
+	}
+}
 
-	file.write_all(serialize.as_bytes()).unwrap();
+async fn extract_keywords(pool: &SqlitePool) {
+	tracing::info!("Rewriting weights table...");
+	sqlx::query("DELETE FROM importance")
+		.execute(pool)
+		.await
+		.unwrap();
+	sqlx::query("VACUUM").execute(pool).await.unwrap();
+
+	let mut page = 0;
+	let pagesize = 1000;
+	loop {
+		let query = sqlx::query(
+			"SELECT domain, path, html
+				FROM pages
+				LIMIT ?
+				OFFSET ?",
+		)
+		.bind(pagesize)
+		.bind(page * pagesize);
+		page += 1;
+
+		let fetch = pool.fetch_all(query).await.unwrap();
+		let mut done = true;
+		tracing::info!("Rows in page: {}", fetch.len());
+		for row in fetch {
+			done = false;
+			let mut i: u64 = 0;
+			let mut freq_count: HashMap<String, i32> = HashMap::new();
+
+			let html: String = row.try_get(2).unwrap();
+			let words = get_words(&html);
+
+			for word in words.split(char::is_whitespace).filter(|s| !s.is_empty()) {
+				*freq_count.entry(word.to_owned()).or_default() += 1;
+				i += 1;
+			}
+
+			let mut tf: Vec<(String, f64)> = freq_count
+				.into_iter()
+				.map(|(term, freq)| (term, freq as f64 / i as f64))
+				.collect();
+
+			// Sort largest first.
+			tf.sort_by(|(_, weight1), (_, weight2)| (*weight2).partial_cmp(weight1).unwrap());
+
+			for (word, weight) in tf.into_iter().take(10) {
+				sqlx::query(
+					"INSERT INTO importance(domain, path, word, weight) VALUES (?, ?, ?, ?)",
+				)
+				.bind(row.get::<String, usize>(0))
+				.bind(row.get::<String, usize>(1))
+				.bind(word)
+				.bind(weight)
+				.execute(pool)
+				.await
+				.unwrap();
+			}
+		}
+		tracing::info!("Pages done: {}", page);
+		if done {
+			break;
+		}
+	}
 }
 
 async fn crawl_pages(pool: SqlitePool) {
@@ -128,7 +245,10 @@ async fn crawl_pages(pool: SqlitePool) {
 	// TODO: find a better way to optimize for the number of workers
 	let crawling_engine = crawling_engine.start_engine(1000).await;
 
-	println!("{}", crawling_engine.get_visited_count().await);
+	tracing::info!(
+		"Total Pages visited: {}",
+		crawling_engine.get_visited_count().await
+	);
 }
 
 #[tokio::main]
@@ -144,15 +264,30 @@ async fn main() {
 		.finish();
 
 	if let Err(e) = tracing::subscriber::set_global_default(subscriber) {
-		println!("{}", e);
+		tracing::error!("{}", e);
 	}
-	// Logging started
 
 	tracing::info!("Starting");
 
-	let pool = ensure_database("sqlite://./db.sqlite").await;
+	let mut path = String::from("sqlite://./db.sqlite");
 
-	crawl_pages(pool.clone()).await;
+	let args: Vec<String> = std::env::args().collect();
+	if args.len() >= 3 {
+		path = format!("sqlite://{}", args[2]);
+	}
 
-	construct_idf(&pool).await;
+	println!("Opening: {}", path);
+	sleep(Duration::from_secs_f64(0.5)).await;
+
+	let pool = ensure_database(path.as_str()).await;
+
+	match args[1].to_lowercase().as_str() {
+		"crawl" => crawl_pages(pool.clone()).await,
+		"process" => construct_idf(&pool).await,
+		"extract" => extract_keywords(&pool).await,
+		arg => tracing::warn!(
+			"Invalid Command \"{}\", valid commands are \"crawl\" and \"process\"",
+			arg
+		),
+	}
 }

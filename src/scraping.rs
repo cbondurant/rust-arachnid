@@ -17,7 +17,6 @@ fn remove_unwanted_tags(node: &NodeRef) {
 			}
 		}
 	}
-	println!("Walking out!");
 }
 
 pub fn get_words(text: &str) -> String {
