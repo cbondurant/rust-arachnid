@@ -7,3 +7,17 @@ Todo:
 - Runtime configuration.
 - Crawl resumption.
 - Improving the blocklisting system for domains and pages I dont want to crawl.
+
+# How to use, the basics
+
+build with `cargo build -r`
+
+run the following in order:
+
+- `rust-arachnid crawl` to begin crawling webpages. End with ctrl+C and allow it to commit everything to the sqlite database.
+- `rust-arachnid process` Takes the existing sqlite database and calculates Inverse Document Frequency for all unique printable words across all documents crawled.
+- `rust-arachnid extract` Calcuates document frequency and stores Tf-Idf values in a third table of the sql database.
+
+At current time only explicit sql queries can be used to query the resulting term search database, however the most important words for each document should be stored in the `importance` table, where a larger weight value represents greater importance of that word for the linked document.
+
+All listed commands take one additional parameter which is a path to the database. Otherwise it defaults to `./db.sqlite`.
