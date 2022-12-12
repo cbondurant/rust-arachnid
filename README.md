@@ -1,6 +1,7 @@
 A full rewrite of my test webcrawler "arachnid" in rust.
 
-This can currently achieve a peak of around 700 pages per second on my machine.
+This can currently achieve a peak of around 300 pages per second on my machine and internet.
+(Full disclosure this used to say an absurd 700, but I had *not* been measuring correctly)
 
 Todo:
 
