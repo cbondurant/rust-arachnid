@@ -270,7 +270,7 @@ async fn main() {
 	tracing::info!("Starting");
 
 	let mut path = String::from("sqlite://./db.sqlite");
-    let mut origins = Vec::new();
+	let mut origins = Vec::new();
 
 	let args: Vec<String> = std::env::args().collect();
 	if args.len() >= 3 {
@@ -284,15 +284,15 @@ async fn main() {
 						return;
 					}
 				}
-			}else{
-                origins.push(match reqwest::Url::parse(arg) {
-                    Ok(url) => url,
-                    Err(e) => {
-                        eprintln!("Invalid url! {:?}" , e);
-                        return;
-                    }
-                })
-            }
+			} else {
+				origins.push(match reqwest::Url::parse(arg) {
+					Ok(url) => url,
+					Err(e) => {
+						eprintln!("Invalid url! {:?}", e);
+						return;
+					}
+				})
+			}
 		}
 	}
 
