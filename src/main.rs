@@ -233,14 +233,14 @@ async fn extract_keywords(pool: &SqlitePool) {
 	}
 }
 
-async fn crawl_pages(pool: SqlitePool) {
+async fn crawl_pages(pool: SqlitePool, origins: Vec<reqwest::Url>) {
 	let crawling_engine = CrawlingEngine::new(pool);
 
 	// A site on the corner of the internet, a good starting point.
 	// unwrapping because I know its a real addres.
-	crawling_engine
-		.add_destination(reqwest::Url::parse("http://sixey.es/").unwrap())
-		.await;
+	for page in origins {
+		crawling_engine.add_destination(page).await;
+	}
 
 	// TODO: find a better way to optimize for the number of workers
 	let crawling_engine = crawling_engine.start_engine(1000).await;
@@ -270,10 +270,30 @@ async fn main() {
 	tracing::info!("Starting");
 
 	let mut path = String::from("sqlite://./db.sqlite");
+    let mut origins = Vec::new();
 
 	let args: Vec<String> = std::env::args().collect();
 	if args.len() >= 3 {
-		path = format!("sqlite://{}", args[2]);
+		let mut arg_iter = args.iter().skip(2);
+		while let Some(arg) = arg_iter.next() {
+			if arg == "--db" {
+				path = match arg_iter.next() {
+					Some(path) => format!("sqlite://{}", path),
+					None => {
+						eprintln!("Argument --db provided but no path given!");
+						return;
+					}
+				}
+			}else{
+                origins.push(match reqwest::Url::parse(arg) {
+                    Ok(url) => url,
+                    Err(e) => {
+                        eprintln!("Invalid url! {:?}" , e);
+                        return;
+                    }
+                })
+            }
+		}
 	}
 
 	println!("Opening: {}", path);
@@ -282,7 +302,7 @@ async fn main() {
 	let pool = ensure_database(path.as_str()).await;
 
 	match args[1].to_lowercase().as_str() {
-		"crawl" => crawl_pages(pool.clone()).await,
+		"crawl" => crawl_pages(pool.clone(), origins).await,
 		"process" => construct_idf(&pool).await,
 		"extract" => extract_keywords(&pool).await,
 		arg => tracing::warn!(
