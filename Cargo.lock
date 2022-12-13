@@ -23,6 +23,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "arachnid"
+version = "0.2.0"
+dependencies = [
+ "clap",
+ "flume",
+ "html5ever 0.26.0",
+ "kuchiki",
+ "reqwest",
+ "scraper",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "atoi"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1394,24 +1412,6 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
  "winreg",
-]
-
-[[package]]
-name = "rust-arachnid"
-version = "0.1.0"
-dependencies = [
- "clap",
- "flume",
- "html5ever 0.26.0",
- "kuchiki",
- "reqwest",
- "scraper",
- "serde_json",
- "sqlx",
- "tokio",
- "tokio-stream",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
