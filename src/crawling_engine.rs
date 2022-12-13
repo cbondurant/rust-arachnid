@@ -17,7 +17,7 @@ pub struct CrawlingEngine {
 	pages_input: Sender<Url>,
 	pages_output: Receiver<Url>,
 	visited: Mutex<HashSet<String>>,
-	blocklist: Vec<String>,
+	blockset: HashSet<String>,
 	responded: Mutex<i32>,
 	db: Pool<Any>,
 }
@@ -30,16 +30,19 @@ impl CrawlingEngine {
 	// Is the listed URL blocked by one of our rules?
 	// TODO: Improve url parsing and block rules.
 	// Reqwest has a url parser, utilize that.
-	fn url_is_blocked(&self, url: &str) -> bool {
-		for page in self.blocklist.iter() {
-			if url.contains(page.as_str()) {
-				return true;
-			}
+	fn url_is_blocked(&self, url: &Url) -> bool {
+		if let Some(host) = url.host() {
+			self.blockset.contains(&host.to_string())
+		} else {
+			false
 		}
-		false
 	}
 
 	pub fn new(pool: Pool<Any>) -> Self {
+		Self::with_blockset(pool, HashSet::new())
+	}
+
+	pub fn with_blockset(pool: Pool<Any>, blockset: HashSet<String>) -> Self {
 		let (rx, tx) = flume::unbounded();
 		CrawlingEngine {
 			client: reqwest::Client::builder()
@@ -49,7 +52,7 @@ impl CrawlingEngine {
 			pages_input: rx,
 			pages_output: tx,
 			visited: Mutex::new(HashSet::new()),
-			blocklist: Vec::new(),
+			blockset,
 			responded: Mutex::new(0),
 			db: pool,
 		}
@@ -130,7 +133,7 @@ impl CrawlingEngine {
 			}
 
 			if let Ok(url) = data.pages_output.recv_async().await {
-				if data.url_is_blocked(url.as_str()) {
+				if data.url_is_blocked(&url) {
 					continue;
 				}
 

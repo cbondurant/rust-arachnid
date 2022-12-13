@@ -8,6 +8,10 @@ use reqwest::Url;
 use tokio::time::sleep;
 use tracing::Level;
 
+use std::collections::HashSet;
+use std::fs::File;
+use std::io::{self, BufRead};
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
 
@@ -120,10 +124,16 @@ struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-	Crawl { origins: Vec<Url> },
+	Crawl {
+		origins: Vec<Url>,
+		#[arg(long, short)]
+		blocklist: Option<PathBuf>,
+	},
 	Process,
 	Extract,
-	Search { keywords: Vec<String> },
+	Search {
+		keywords: Vec<String>,
+	},
 }
 
 #[tokio::main]
@@ -160,7 +170,19 @@ async fn main() {
 	let pool = ensure_database(options.into()).await;
 
 	match args.command {
-		Command::Crawl { origins } => crawl_pages(pool.clone(), origins).await,
+		Command::Crawl { origins, blocklist } => {
+			let blockset = match blocklist {
+				Some(path) => match File::open(path) {
+					Ok(file) => io::BufReader::new(file).lines().collect(),
+					Err(e) => Err(e),
+				},
+				None => Ok(HashSet::new()),
+			};
+			match blockset {
+				Ok(blockset) => crawl_pages(pool.clone(), origins, blockset).await,
+				Err(e) => tracing::error!("{}", e),
+			}
+		}
 		Command::Process => construct_idf(&pool).await,
 		Command::Extract => extract_keywords(&pool).await,
 		Command::Search { keywords } => {

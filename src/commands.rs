@@ -1,6 +1,6 @@
 use super::scraping::get_words;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::crawling_engine::CrawlingEngine;
 use sqlx::{Any, Executor, Pool, Row};
@@ -107,16 +107,26 @@ pub async fn extract_keywords(pool: &Pool<Any>) {
 			tf.sort_by(|(_, weight1), (_, weight2)| (*weight2).partial_cmp(weight1).unwrap());
 
 			for (word, weight) in tf.into_iter().take(10) {
-				sqlx::query(
+				let result = sqlx::query(
 					"INSERT INTO importance(domain, path, word, weight) VALUES (?, ?, ?, ?)",
 				)
 				.bind(row.get::<String, usize>(0))
 				.bind(row.get::<String, usize>(1))
-				.bind(word)
+				.bind(word.clone())
 				.bind(weight)
 				.execute(pool)
-				.await
-				.unwrap();
+				.await;
+				match result {
+					Ok(_) => (),
+					Err(e) => tracing::warn!(
+						"Error inserting {}, {}, {}, {}: {}",
+						row.get::<String, usize>(0),
+						row.get::<String, usize>(1),
+						word,
+						weight,
+						e
+					),
+				}
 			}
 		}
 		tracing::info!("Pages done: {}", page);
@@ -126,8 +136,8 @@ pub async fn extract_keywords(pool: &Pool<Any>) {
 	}
 }
 
-pub async fn crawl_pages(pool: Pool<Any>, origins: Vec<reqwest::Url>) {
-	let crawling_engine = CrawlingEngine::new(pool);
+pub async fn crawl_pages(pool: Pool<Any>, origins: Vec<reqwest::Url>, blockset: HashSet<String>) {
+	let crawling_engine = CrawlingEngine::with_blockset(pool, blockset);
 
 	// A site on the corner of the internet, a good starting point.
 	// unwrapping because I know its a real addres.
