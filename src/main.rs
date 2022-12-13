@@ -12,43 +12,33 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use sqlx::{
-	sqlite::{
-		SqliteConnectOptions, SqliteJournalMode, SqliteLockingMode, SqlitePoolOptions,
-		SqliteSynchronous,
-	},
-	SqlitePool,
+	any::{AnyConnectOptions, AnyPoolOptions},
+	sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteLockingMode, SqliteSynchronous},
+	Any, Pool,
 };
 
 use commands::*;
 
-async fn ensure_database(path: &str) -> SqlitePool {
+async fn ensure_database(options: AnyConnectOptions) -> Pool<Any> {
 	tracing::info!("Opening Database");
 
-	let sqlite_options = SqliteConnectOptions::from_str(path)
-		.unwrap()
-		.create_if_missing(true)
-		.synchronous(SqliteSynchronous::Off)
-		.locking_mode(SqliteLockingMode::Exclusive)
-		.journal_mode(SqliteJournalMode::Wal);
-
-	let pool = SqlitePoolOptions::new()
+	let pool = AnyPoolOptions::new()
 		//.max_connections(10000)
 		.max_connections(1)
 		.test_before_acquire(false)
-		.connect_with(sqlite_options)
+		.connect_with(options)
 		.await
 		.unwrap();
-
 	if let Err(e) = sqlx::query("PRAGMA foreign_keys = ON").execute(&pool).await {
 		tracing::warn!("{:?}", e);
 	}
 
 	match sqlx::query(
 		"CREATE TABLE pages(
-	domain TEXT NOT NULL,
-	path TEXT NOT NULL,
-	html TEXT NOT NULL,
-	PRIMARY KEY(domain, path))",
+				domain TEXT NOT NULL,
+				path TEXT NOT NULL,
+				html TEXT NOT NULL,
+				PRIMARY KEY(domain, path))",
 	)
 	.execute(&pool)
 	.await
@@ -67,9 +57,9 @@ async fn ensure_database(path: &str) -> SqlitePool {
 
 	match sqlx::query(
 		"CREATE TABLE keywords(
-	word TEXT NOT NULL,
-	idf REAL NOT NULL,
-	PRIMARY KEY(word))",
+				word TEXT NOT NULL,
+				idf REAL NOT NULL,
+				PRIMARY KEY(word))",
 	)
 	.execute(&pool)
 	.await
@@ -88,14 +78,14 @@ async fn ensure_database(path: &str) -> SqlitePool {
 
 	match sqlx::query(
 		"CREATE TABLE importance (
-			domain	TEXT NOT NULL,
-			path	TEXT NOT NULL,
-			word	TEXT NOT NULL,
-			weight	REAL NOT NULL,
-			FOREIGN KEY(domain, path) REFERENCES pages(domain, path) ON DELETE CASCADE,
-			PRIMARY KEY(path, domain, word),
-			FOREIGN KEY(word) REFERENCES keywords(word) ON DELETE CASCADE
-		);",
+						domain	TEXT NOT NULL,
+						path	TEXT NOT NULL,
+						word	TEXT NOT NULL,
+						weight	REAL NOT NULL,
+						FOREIGN KEY(domain, path) REFERENCES pages(domain, path) ON DELETE CASCADE,
+						PRIMARY KEY(path, domain, word),
+						FOREIGN KEY(word) REFERENCES keywords(word) ON DELETE CASCADE
+					);",
 	)
 	.execute(&pool)
 	.await
@@ -156,11 +146,18 @@ async fn main() {
 
 	let args = Args::parse();
 
-	let path = String::from(format!("sqlite://{}", args.db));
+	let path = format!("sqlite://{}", args.db);
 	println!("Opening: {}", path);
 	sleep(Duration::from_secs_f64(0.5)).await;
 
-	let pool = ensure_database(path.as_str()).await;
+	let options = SqliteConnectOptions::from_str(path.as_str())
+		.unwrap()
+		.create_if_missing(true)
+		.synchronous(SqliteSynchronous::Off)
+		.locking_mode(SqliteLockingMode::Exclusive)
+		.journal_mode(SqliteJournalMode::Wal);
+
+	let pool = ensure_database(options.into()).await;
 
 	match args.command {
 		Command::Crawl { origins } => crawl_pages(pool.clone(), origins).await,

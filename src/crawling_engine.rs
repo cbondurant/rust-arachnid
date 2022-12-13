@@ -1,5 +1,5 @@
 use flume::{Receiver, Sender};
-use sqlx::SqlitePool;
+use sqlx::{Any, Pool};
 use std::iter::Iterator;
 use std::{collections::HashSet, sync::Arc};
 use tokio::signal;
@@ -19,7 +19,7 @@ pub struct CrawlingEngine {
 	visited: Mutex<HashSet<String>>,
 	blocklist: Vec<String>,
 	responded: Mutex<i32>,
-	db: SqlitePool,
+	db: Pool<Any>,
 }
 
 impl CrawlingEngine {
@@ -39,7 +39,7 @@ impl CrawlingEngine {
 		false
 	}
 
-	pub fn new(pool: SqlitePool) -> Self {
+	pub fn new(pool: Pool<Any>) -> Self {
 		let (rx, tx) = flume::unbounded();
 		CrawlingEngine {
 			client: reqwest::Client::builder()

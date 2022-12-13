@@ -3,11 +3,10 @@ use super::scraping::get_words;
 use std::collections::HashMap;
 
 use super::crawling_engine::CrawlingEngine;
-use sqlx::{Execute, Executor, Row, SqlitePool};
-
+use sqlx::{Any, Executor, Pool, Row};
 use tokio_stream::StreamExt;
 
-pub async fn construct_idf(pool: &SqlitePool) {
+pub async fn construct_idf(pool: &Pool<Any>) {
 	let query = sqlx::query("SELECT html FROM pages");
 
 	let mut fetch = pool.fetch(query);
@@ -62,7 +61,7 @@ pub async fn construct_idf(pool: &SqlitePool) {
 	}
 }
 
-pub async fn extract_keywords(pool: &SqlitePool) {
+pub async fn extract_keywords(pool: &Pool<Any>) {
 	tracing::info!("Rewriting weights table...");
 	sqlx::query("DELETE FROM importance")
 		.execute(pool)
@@ -127,7 +126,7 @@ pub async fn extract_keywords(pool: &SqlitePool) {
 	}
 }
 
-pub async fn crawl_pages(pool: SqlitePool, origins: Vec<reqwest::Url>) {
+pub async fn crawl_pages(pool: Pool<Any>, origins: Vec<reqwest::Url>) {
 	let crawling_engine = CrawlingEngine::new(pool);
 
 	// A site on the corner of the internet, a good starting point.
@@ -145,11 +144,8 @@ pub async fn crawl_pages(pool: SqlitePool, origins: Vec<reqwest::Url>) {
 	);
 }
 
-pub async fn search_keywords(pool: &SqlitePool, keywords: Vec<String>) -> Vec<String> {
-	let mut binding = Vec::new();
-	for _ in 0..keywords.len() {
-		binding.push("?");
-	}
+pub async fn search_keywords(pool: &Pool<Any>, keywords: Vec<String>) -> Vec<String> {
+	let binding = vec!["?"; keywords.len()];
 
 	let binding = binding.join(",");
 
